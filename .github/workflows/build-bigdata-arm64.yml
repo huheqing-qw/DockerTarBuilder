@@ -1,0 +1,64 @@
+name: Build BigData Components (ARM64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_list:
+        description: '镜像列表（逗号分隔，留空则使用默认清单）'
+        required: false
+        default: ''
+      custom_name:
+        description: '自定义 Release 名称前缀'
+        required: false
+        default: 'BigData-ARM64'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - zookeeper:3.9.3
+          - apache/kafka:3.9.0
+          - arm64v8/elasticsearch:8.17.10
+          - arm64v8/kibana:8.17.10
+          - arm64v8/logstash:8.17.10
+          - apache/hbase:2.6.0
+          - apache/spark:3.5.5
+          - flink:1.20.0
+          - trinodb/trino:478
+          - apache/hive:4.0.1
+          - apache/ranger:2.6.0
+          - apache/livy:0.8.0
+          - gethue/hue:4.11.0
+    
+    steps:
+      - name: 设置镜像名称
+        id: img
+        run: |
+          IMAGE="${{ matrix.image }}"
+          SAFE_NAME=$(echo "$IMAGE" | tr '/' '_' | tr ':' '_')
+          echo "safe_name=${SAFE_NAME}" >> $GITHUB_OUTPUT
+          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
+          echo "构建: ${IMAGE}"
+      
+      - name: 拉取并保存镜像
+        run: |
+          IMAGE="${{ steps.img.outputs.image }}"
+          SAFE_NAME="${{ steps.img.outputs.safe_name }}"
+          
+          echo "拉取镜像: ${IMAGE} (linux/arm64)"
+          docker pull "${IMAGE}" --platform linux/arm64
+          
+          echo "保存镜像: ${SAFE_NAME}-arm64.tar.gz"
+          docker save "${IMAGE}" | gzip > "${SAFE_NAME}-arm64.tar.gz"
+          
+          ls -lh *.tar.gz
+      
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.img.outputs.safe_name }}-arm64
+          path: ${{ steps.img.outputs.safe_name }}-arm64.tar.gz
+          retention-days: 30
