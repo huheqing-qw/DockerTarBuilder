@@ -28,35 +28,43 @@ jobs:
             
             # 先压缩
             gzip -c "${image_name}-arm64.tar" > "${image_name}-arm64.tar.gz"
+            rm "${image_name}-arm64.tar"
             
-            # 检查文件大小，如果大于 1.9GB 则分割
+            # 检查文件大小，如果大于 950MB 则分割（为 1GB 限制留余量）
             file_size=$(stat -c%s "${image_name}-arm64.tar.gz")
-            max_size=1900000000  # 1.9GB，为 2GB 限制留点余量
+            max_size=950000000  # 950MB，确保分割后每个文件 < 1GB
             
             if [ $file_size -gt $max_size ]; then
-              echo "File size ($file_size bytes) exceeds 1.9GB, splitting..."
-              # 进入文件所在目录进行分割
-              cd $(dirname "${image_name}-arm64.tar.gz")
-              split -b 1900M "${image_name}-arm64.tar.gz" "${image_name}-arm64.tar.gz.part-"
+              echo "File size ($(($file_size/1024/1024))MB) exceeds 950MB, splitting into 900MB parts..."
+              # 分割成 900MB 的分卷
+              split -b 900M "${image_name}-arm64.tar.gz" "${image_name}-arm64.tar.gz.part-"
               rm "${image_name}-arm64.tar.gz"
-              cd -
+              echo "✅ Split completed. Parts created:"
+              ls -lh "${image_name}-arm64.tar.gz.part-"* 2>/dev/null || echo "No parts found"
               echo "SPLITTED=true" >> $GITHUB_ENV
+            else
+              echo "✅ File size ($(($file_size/1024/1024))MB) OK, no split needed"
             fi
-            
-            rm "${image_name}-arm64.tar"
           done
 
       - name: List generated files (debug step)
         run: |
-          echo "Preparing docker images list files:"
-          find $GITHUB_WORKSPACE -name "*.tar.gz*" 2>/dev/null || echo "No files found"
+          echo "=========================================="
+          echo "Generated files in workspace:"
+          echo "=========================================="
+          find $GITHUB_WORKSPACE -name "*.tar.gz*" -type f 2>/dev/null || echo "No files found"
+          echo ""
+          echo "File sizes:"
+          find $GITHUB_WORKSPACE -name "*.tar.gz*" -type f -exec ls -lh {} \; 2>/dev/null || echo "No files"
+          echo ""
+          
+          # 设置 Release 名称
           release_name=$(TZ="Asia/Shanghai" date +'%Y-%m-%d %H:%M Build')
           echo "RELEASE_NAME=$release_name" >> $GITHUB_ENV
           
-          # 创建一个文件列表，用于后续上传
-          find $GITHUB_WORKSPACE -name "*.tar.gz*" -type f > /tmp/upload_files.txt
-          echo "Files to upload:"
-          cat /tmp/upload_files.txt
+          # 统计文件数量
+          file_count=$(find $GITHUB_WORKSPACE -name "*.tar.gz*" -type f 2>/dev/null | wc -l)
+          echo "Total files to upload: $file_count"
 
       - name: Create GitHub Release and Upload Assets
         uses: softprops/action-gh-release@master
@@ -69,13 +77,12 @@ jobs:
             ### 📦 本次打包的镜像
             `${{ github.event.inputs.docker_images }}`
             
-            ### How to use? For example
-            `docker load -i alpine_latest.tar.gz`
+            ### 📦 文件说明
+            - 小于 950MB 的镜像：单个 `.tar.gz` 文件
+            - 大于 950MB 的镜像：分割成多个 900MB 的 `.part-*` 分卷文件
             
-            ### ⚠️ 对于分卷压缩的大文件（超过 1.9GB）
-            需要先合并再解压：
+            ### How to use?
+            
+            **对于单个文件：**
             ```bash
-            # 合并分卷
-            cat your-image.tar.gz.part-* > your-image.tar.gz
-            # 正常加载
-            docker load -i your-image.tar.gz
+            docker load -i 镜像名.tar.gz
