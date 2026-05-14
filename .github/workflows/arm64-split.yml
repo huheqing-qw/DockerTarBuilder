@@ -11,6 +11,9 @@ on:
 jobs:
   pull_and_package:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write  # 明确授予写入权限
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -60,9 +63,6 @@ jobs:
               # 列出分卷
               echo "✅ Created parts:"
               ls -lh "${image_name}-arm64.tar.gz.part-"*
-              
-              # 标记已分割
-              echo "SPLITTED=true" >> $GITHUB_ENV
             else
               echo "✅ File size OK (${file_size_mb}MB), no split needed"
             fi
@@ -76,11 +76,8 @@ jobs:
           echo "ALL GENERATED FILES"
           echo "=========================================="
           
-          # 切换到工作目录
-          cd $GITHUB_WORKSPACE
-          
           # 列出所有相关文件
-          find . -maxdepth 1 -name "*.tar.gz*" -type f | sort
+          ls -lh *.tar.gz* 2>/dev/null || echo "No files found"
           
           echo ""
           echo "=========================================="
@@ -88,7 +85,7 @@ jobs:
           echo "=========================================="
           
           # 显示每个文件的大小
-          for file in $(find . -maxdepth 1 -name "*.tar.gz*" -type f); do
+          for file in $(ls *.tar.gz* 2>/dev/null); do
             size=$(stat -c%s "$file")
             size_mb=$((size / 1024 / 1024))
             echo "$file - ${size_mb}MB"
@@ -99,33 +96,67 @@ jobs:
           echo "RELEASE_NAME=$release_name" >> $GITHUB_ENV
           
           # 统计文件数量
-          file_count=$(find . -maxdepth 1 -name "*.tar.gz*" -type f | wc -l)
+          file_count=$(ls *.tar.gz* 2>/dev/null | wc -l)
           echo "Total files to upload: $file_count"
-          
-          # 保存文件列表到环境变量
           echo "FILE_COUNT=$file_count" >> $GITHUB_ENV
 
-      - name: Create GitHub Release
-        id: create_release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: DockerTarBuilder-ARM64
-          name: ${{ env.RELEASE_NAME }} for ARM64
-          body: |
+      - name: Delete Old Release (to ensure clean upload)
+        run: |
+          # 删除旧的 release，避免冲突
+          gh release delete DockerTarBuilder-ARM64 --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create New Release and Upload Assets
+        run: |
+          # 创建新的 release
+          gh release create DockerTarBuilder-ARM64 \
+            --title "${{ env.RELEASE_NAME }} for ARM64" \
+            --notes "$(cat << EOF
             [![Github](https://img.shields.io/badge/RELEASE:DockerTarBuilder-123456?logo=github&logoColor=fff&labelColor=green&style=for-the-badge)](https://www.bilibili.com/video/BV1EZ421M7mL) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.top/archives/1)
             
             ### 📦 本次打包的镜像
-            `${{ github.event.inputs.docker_images }}`
+            \`${{ github.event.inputs.docker_images }}\`
             
             ### 📊 文件统计
             共生成 **${{ env.FILE_COUNT }}** 个文件
             
             ### 📦 文件说明
-            - **小于 800MB** 的镜像：单个 `.tar.gz` 文件
-            - **大于 800MB** 的镜像：分割成多个 800MB 的 `.part-*` 分卷文件
+            - **小于 800MB** 的镜像：单个 \`.tar.gz\` 文件
+            - **大于 800MB** 的镜像：分割成多个 800MB 的 \`.part-*\` 分卷文件
             
             ### 🚀 使用方法
             
             **对于单个文件：**
-            ```bash
+            \`\`\`bash
             docker load -i 文件名.tar.gz
+            \`\`\`
+            
+            **对于分卷文件（多个 .part-* 文件）：**
+            \`\`\`bash
+            # 1. 先合并所有分卷
+            cat 文件名.tar.gz.part-* > 文件名.tar.gz
+            # 2. 再加载镜像
+            docker load -i 文件名.tar.gz
+            \`\`\`
+            
+            ### ⚠️ 重要提示
+            - 分卷文件必须**全部下载**才能正常合并
+            - 合并后的文件需要先解压才能使用
+            EOF
+            )" \
+            --draft=false \
+            --prerelease=false
+          
+          # 上传所有文件
+          echo "Uploading assets..."
+          for file in *.tar.gz*; do
+            if [ -f "$file" ]; then
+              echo "Uploading: $file"
+              gh release upload DockerTarBuilder-ARM64 "$file" --clobber
+            fi
+          done
+          
+          echo "✅ Release created and assets uploaded successfully!"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
