@@ -100,63 +100,85 @@ jobs:
           echo "Total files to upload: $file_count"
           echo "FILE_COUNT=$file_count" >> $GITHUB_ENV
 
-      - name: Delete Old Release (to ensure clean upload)
+      - name: Delete Old Release
         run: |
           # 删除旧的 release，避免冲突
           gh release delete DockerTarBuilder-ARM64 --yes --cleanup-tag || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create New Release and Upload Assets
+      - name: Create New Release
         run: |
+          # 准备 release notes
+          RELEASE_NOTES="[![Github](https://img.shields.io/badge/RELEASE:DockerTarBuilder-123456?logo=github&logoColor=fff&labelColor=green&style=for-the-badge)](https://www.bilibili.com/video/BV1EZ421M7mL) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.top/archives/1)
+          
+          ### 📦 本次打包的镜像
+          \`${{ github.event.inputs.docker_images }}\`
+          
+          ### 📊 文件统计
+          共生成 **${{ env.FILE_COUNT }}** 个文件
+          
+          ### 📦 文件说明
+          - **小于 800MB** 的镜像：单个 .tar.gz 文件
+          - **大于 800MB** 的镜像：分割成多个 800MB 的 .part-* 分卷文件
+          
+          ### 🚀 使用方法
+          
+          **对于单个文件：**
+          \`\`\`bash
+          docker load -i 文件名.tar.gz
+          \`\`\`
+          
+          **对于分卷文件（多个 .part-* 文件）：**
+          \`\`\`bash
+          # 1. 先合并所有分卷
+          cat 文件名.tar.gz.part-* > 文件名.tar.gz
+          # 2. 再加载镜像
+          docker load -i 文件名.tar.gz
+          \`\`\`
+          
+          ### ⚠️ 重要提示
+          - 分卷文件必须**全部下载**才能正常合并
+          - 合并后的文件需要先解压才能使用"
+          
           # 创建新的 release
           gh release create DockerTarBuilder-ARM64 \
             --title "${{ env.RELEASE_NAME }} for ARM64" \
-            --notes "$(cat << EOF
-            [![Github](https://img.shields.io/badge/RELEASE:DockerTarBuilder-123456?logo=github&logoColor=fff&labelColor=green&style=for-the-badge)](https://www.bilibili.com/video/BV1EZ421M7mL) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.top/archives/1)
-            
-            ### 📦 本次打包的镜像
-            \`${{ github.event.inputs.docker_images }}\`
-            
-            ### 📊 文件统计
-            共生成 **${{ env.FILE_COUNT }}** 个文件
-            
-            ### 📦 文件说明
-            - **小于 800MB** 的镜像：单个 \`.tar.gz\` 文件
-            - **大于 800MB** 的镜像：分割成多个 800MB 的 \`.part-*\` 分卷文件
-            
-            ### 🚀 使用方法
-            
-            **对于单个文件：**
-            \`\`\`bash
-            docker load -i 文件名.tar.gz
-            \`\`\`
-            
-            **对于分卷文件（多个 .part-* 文件）：**
-            \`\`\`bash
-            # 1. 先合并所有分卷
-            cat 文件名.tar.gz.part-* > 文件名.tar.gz
-            # 2. 再加载镜像
-            docker load -i 文件名.tar.gz
-            \`\`\`
-            
-            ### ⚠️ 重要提示
-            - 分卷文件必须**全部下载**才能正常合并
-            - 合并后的文件需要先解压才能使用
-            EOF
-            )" \
+            --notes "$RELEASE_NOTES" \
             --draft=false \
             --prerelease=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Assets
+        run: |
+          echo "=========================================="
+          echo "Uploading assets to release..."
+          echo "=========================================="
           
-          # 上传所有文件
-          echo "Uploading assets..."
-          for file in *.tar.gz*; do
+          # 获取所有需要上传的文件
+          files=$(ls *.tar.gz* 2>/dev/null || echo "")
+          
+          if [ -z "$files" ]; then
+            echo "❌ No files found to upload!"
+            exit 1
+          fi
+          
+          # 逐个上传文件
+          for file in $files; do
             if [ -f "$file" ]; then
-              echo "Uploading: $file"
+              echo "📤 Uploading: $file ($(stat -c%s "$file") bytes)"
               gh release upload DockerTarBuilder-ARM64 "$file" --clobber
+              echo "✅ Uploaded: $file"
+              echo ""
             fi
           done
           
-          echo "✅ Release created and assets uploaded successfully!"
+          echo "=========================================="
+          echo "✅ All files uploaded successfully!"
+          echo "=========================================="
+          
+          # 显示 release 信息
+          echo "Release URL: https://github.com/${{ github.repository }}/releases/tag/DockerTarBuilder-ARM64"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
